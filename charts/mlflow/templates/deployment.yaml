@@ -1,25 +1,5 @@
-{{- $artifactCommandPrefix := "default-artifact-root" }}
-{{- $artifactCommand := printf "--%s=./mlruns" $artifactCommandPrefix }}
-
-{{- if .Values.artifactRoot.proxiedArtifactStorage }}
-  {{- $artifactCommandPrefix = "artifacts-destination" }}
-  {{- $artifactCommand = printf "--%s=./mlartifacts" $artifactCommandPrefix }}
-{{- end }}
-
-{{- if .Values.artifactRoot.azureBlob.enabled }}
-  {{- $artifactCommand = printf "--%s=wasbs://%s@%s.blob.core.windows.net/%s" $artifactCommandPrefix .Values.artifactRoot.azureBlob.container .Values.artifactRoot.azureBlob.storageAccount .Values.artifactRoot.azureBlob.path }}
-{{- else if .Values.artifactRoot.s3.enabled }}
-  {{- $artifactCommand = printf "--%s=s3://%s/%s" $artifactCommandPrefix .Values.artifactRoot.s3.bucket .Values.artifactRoot.s3.path }}
-{{- else if .Values.artifactRoot.gcs.enabled }}
-  {{- $artifactCommand = printf "--%s=gs://%s/%s" $artifactCommandPrefix .Values.artifactRoot.gcs.bucket .Values.artifactRoot.gcs.path }}
-{{- end }}
-
-{{- $dbConnectionDriver := "" }}
-{{- if and .Values.backendStore.postgres.enabled .Values.backendStore.postgres.driver }}
-  {{- $dbConnectionDriver = printf "+%s" .Values.backendStore.postgres.driver }}
-{{- else if and .Values.backendStore.mysql.enabled .Values.backendStore.mysql.driver }}
-  {{- $dbConnectionDriver = printf "+%s" .Values.backendStore.mysql.driver }}
-{{- end }}
+{{- $artifactCommand := include "mlflow.artifactCommand" . }}
+{{- $dbConnectionDriver := include "mlflow.dbConnectionDriver" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,7 +33,10 @@ spec:
         - name: dbchecker
           image: "busybox:1.32"
           imagePullPolicy: IfNotPresent
-          command: [ "/script/dbchecker.sh" ]
+          command:
+            {{ toYaml .Values.backendStore.databaseConnectionCheckCommand | nindent 12 }}
+          args:
+            {{ toYaml .Values.backendStore.databaseConnectionCheckArgs | nindent 12 }}
           envFrom:
             - configMapRef:
                 name: {{ template "mlflow.fullname" . }}-env-configmap
@@ -75,9 +58,10 @@ spec:
                 name: {{ template "mlflow.fullname" . }}-env-configmap
             - secretRef:
                 name: {{ template "mlflow.fullname" . }}-env-secret
-          command: ["python"]
+          command:
+            {{ toYaml .Values.backendStore.databaseMigrationCommand | nindent 12 }}
           args:
-            - /opt/mlflow/migrations.py
+            {{ toYaml .Values.backendStore.databaseMigrationArgs | nindent 12 }}
           volumeMounts:
             - name: migrations-config
               mountPath: /opt/mlflow/migrations.py
@@ -94,31 +78,10 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["mlflow"]
+          command:
+            {{ toYaml .Values.command | nindent 12 }}
           args:
-            - server
-            - --host=0.0.0.0
-            - --port={{ .Values.service.port }}
-          {{- if .Values.backendStore.postgres.enabled }}
-            - --backend-store-uri=postgresql{{ $dbConnectionDriver }}://
-          {{- else if .Values.backendStore.mysql.enabled }}
-            - --backend-store-uri=mysql{{ $dbConnectionDriver }}://$(MYSQL_USERNAME):$(MYSQL_PWD)@$(MYSQL_HOST):$(MYSQL_TCP_PORT)/$(MYSQL_DATABASE)
-          {{- else }}
-            - --backend-store-uri=sqlite:///:memory
-          {{- end }}
-            - {{ $artifactCommand }}
-          {{- if .Values.artifactRoot.proxiedArtifactStorage }}
-            - --serve-artifacts
-          {{- end }}
-          {{- if .Values.serviceMonitor.enabled }}
-            - --expose-prometheus=/mlflow/metrics
-          {{- end }}
-          {{- range $key, $value := .Values.extraArgs }}
-            - --{{ kebabcase $key }}={{ $value }}
-          {{- end }}
-          {{- range .Values.extraFlags }}
-            - --{{ kebabcase . }}
-          {{- end }}
+            {{ include "mlflow.commandArgs" . | nindent 12 }}
           ports:
             - name: {{ .Values.service.name }}
               containerPort: {{ .Values.service.port }}

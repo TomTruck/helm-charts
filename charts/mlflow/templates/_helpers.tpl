@@ -62,3 +62,60 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{- define "mlflow.artifactCommand" -}}
+{{- $artifactCommandPrefix := "default-artifact-root" }}
+{{- $artifactCommand := printf "--%s=./mlruns" $artifactCommandPrefix }}
+
+{{- if .Values.artifactRoot.proxiedArtifactStorage }}
+  {{- $artifactCommandPrefix = "artifacts-destination" }}
+  {{- $artifactCommand = printf "--%s=./mlartifacts" $artifactCommandPrefix }}
+{{- end }}
+
+{{- if .Values.artifactRoot.azureBlob.enabled }}
+  {{ printf "--%s=wasbs://%s@%s.blob.core.windows.net/%s" $artifactCommandPrefix .Values.artifactRoot.azureBlob.container .Values.artifactRoot.azureBlob.storageAccount .Values.artifactRoot.azureBlob.path }}
+{{- else if .Values.artifactRoot.s3.enabled }}
+  {{ printf "--%s=s3://%s/%s" $artifactCommandPrefix .Values.artifactRoot.s3.bucket .Values.artifactRoot.s3.path }}
+{{- else if .Values.artifactRoot.gcs.enabled }}
+  {{ printf "--%s=gs://%s/%s" $artifactCommandPrefix .Values.artifactRoot.gcs.bucket .Values.artifactRoot.gcs.path }}
+{{- end }}
+{{- end }}
+
+{{- define "mlflow.dbConnectionDriver" -}}
+{{- $dbConnectionDriver := "" }}
+{{- if and .Values.backendStore.postgres.enabled .Values.backendStore.postgres.driver }}
+  {{ printf "+%s" .Values.backendStore.postgres.driver }}
+{{- else if and .Values.backendStore.mysql.enabled .Values.backendStore.mysql.driver }}
+  {{ printf "+%s" .Values.backendStore.mysql.driver }}
+{{- end }}
+{{- end }}
+
+{{- define "mlflow.commandArgs" }}
+{{- if .Values.overrideArgs }}
+{{ toYaml .Values.overrideArgs }}
+{{- else }}
+- server
+- --host=0.0.0.0
+- --port={{ .Values.service.port }}
+{{- if .Values.backendStore.postgres.enabled }}
+- --backend-store-uri=postgresql{{ include "mlflow.dbConnectionDriver" . }}://
+{{- else if .Values.backendStore.mysql.enabled }}
+- --backend-store-uri=mysql{{ include "mlflow.dbConnectionDriver" }}://$(MYSQL_USERNAME):$(MYSQL_PWD)@$(MYSQL_HOST):$(MYSQL_TCP_PORT)/$(MYSQL_DATABASE)
+{{- else }}
+- --backend-store-uri=sqlite:///:memory
+{{- end }}
+- {{ include "mlflow.artifactCommand" . }}
+{{- if .Values.artifactRoot.proxiedArtifactStorage }}
+- --serve-artifacts
+{{- end }}
+{{- if .Values.serviceMonitor.enabled }}
+- --expose-prometheus=/mlflow/metrics
+{{- end }}
+{{- range $key, $value := .Values.extraArgs }}
+- --{{ kebabcase $key }}={{ $value }}
+{{- end }}
+{{- range .Values.extraFlags }}
+- --{{ kebabcase . }}
+{{- end }}
+{{- end }}
+{{- end }}

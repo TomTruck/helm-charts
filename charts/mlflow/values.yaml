@@ -66,9 +66,17 @@ service:
 backendStore:
   # -- Specifies if you want to run database migration
   databaseMigration: false
+  databaseMigrationCommand:
+    - python
+  databaseMigrationArgs:
+    - /opt/mlflow/migrations.py
+
 
   # -- Add an additional init container, which checks for database availability
   databaseConnectionCheck: false
+  databaseConnectionCheckCommand:
+      - "/script/dbchecker.sh"
+  databaseConnectionCheckArgs: []
 
   postgres:
     # -- Specifies if you want to use postgres backend storage
@@ -137,6 +145,11 @@ artifactRoot:
     # -- Google Cloud Storage bucket folder. If you want to use root level, please don't set anything.
     path: "" # optional
 
+
+command:
+  - mlflow
+
+overrideArgs: []
 # -- A map of arguments and values to pass to the `mlflow server` command
 # Keys must be camelcase. Helm will turn them to kebabcase style.
 extraArgs: {}
